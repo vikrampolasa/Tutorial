@@ -1,0 +1,351 @@
+This was resolved by using sourceBaseURL as https://raw.githubusercontent.com rather than https://github.com. So, please use the URL https://raw.githubusercontent.com if you come across this issue. Also ensure that the RelativeUrl is also changed to remove "raw" as below
+
+cloudboxacademy/covid19/main/ecdc_data/cases_deaths.csv
+
+cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+
+cloudboxacademy/covid19/main/ecdc_data/testing.csv
+
+cloudboxacademy/covid19/main/ecdc_data/country_response.csv
+
+
+--Create Data Factory   
+    --Create resource group: covid-reporting-rg 
+    --covid-reporting-adf
+    --pin create new: Covid Reporting project 
+        --verify Dashboard
+
+--Create Storage Account
+    --covidreportingsa
+    --performance - standard
+    --Redundancy - locally 
+    --Review and Create
+    --go to resource 
+    --pin service
+
+    --Access Keys
+
+--Storage Explorer
+    -- covidvkpreportingsa  -> Storage Browser -> Download Azure Storage Explorer 
+
+--Azure Data Lake Gen2 account 
+    Azure Date Lake Storage Gen2 is built on top of the standard storage account, but it provides additional features such as hierarchical namespace, fine grain security, and compatibility with big data workloads.
+    So it's more suited to be used as a Data Lake for big data analytics.
+    --Storage account
+    --Name: covidreportingdl
+    --Advanced: Enable hierarchical namespace
+    --Review + create
+    --In the account: Properties
+    --pin service
+
+--sql database
+    db name: covid-db
+    server: create new     
+            Server: covid-srv 
+            Authentication method: User SQL Authentication
+                        Server admin: admin 
+
+            Workload: development
+            Compute+storage: configure database 
+                        Service tier: basic
+            Backup storage Redundancy: local
+
+    Networking: 
+        Connectivity method: Public endpoint
+        Allow Azure services to access: Yes
+        Add current ip address: Yes (desktop can interact with the db)
+
+    Review, create
+
+    Go to service account: 
+        Server name, Pricing tier, storage(2gb)
+
+---------------------------------------------------------------------
+--Section 4: Data Ingestion from Azure blob
+---------------------------------------------------------------------
+Copy activity from Azure blob storage to Azure Data Lake
+
+population_by_age.tsv: country_codes, year age range
+    filter by UK
+    : empty data, p: provisional, e: estimated 
+
+upload this file into blob storage
+gz to raw (copy activity)
+
+in order to extract the data. We need connection detail to the blob storage and to the Data Lake.
+So in Data factory, these connection details are represented by link services.
+And finally, the copy activity itself is not executable. So we need a pipeline to wrap all of this up so that it can be executed.
+
+There are three broad areas here:
+the source, the pipeline, and the sink.
+
+1. In covidreportingsa: create blob container - population
+    upload: population_by_age.tsv.gz
+
+2. create "raw" container in datalake: covidreportingdl
+
+3. Naming conventions: ls: linked services, ds: dataset, pl: pipeline
+        ablob: azure blob storage, adls: azure datalake storage
+
+4. Complete steps in the order mentioned in the slide (61). 
+
+5. Create Linked Services: 
+    Open ADF service -> manage -> Linked services -> New
+    -> Azure Blob Storage ->  Name: ls_ablob_covidreportingsa
+    -> Azure subscription -> 
+        Storage account: covidreportingsa 
+    -> Test and create
+
+    -> New -> ADLS Gen2 -> ls_adls_covidreportingdl 
+    -> Azure subscription -> Storage account: covidreportingdl -> Test and create
+
+6. Create Datasets: 
+    -> Author -> Datasets (new) -> Azure Blob Storage -> Delimited Text 
+    ->  Name: ds_population_raw_gz 
+        Linked Service: ls_ablob_covidreportingsa
+        File path: population/population_by_age.tsv.gz 
+        Import schema: None (we're not examining the data, just copying)
+    ->  compression type: gzip
+        compression level: optimal
+        delimiter: tab
+        preview data
+
+    Datasets (new) -> ADLS Gen2 -> Delimited Text 
+    ->  Name: ds_population_raw_tsv
+        Linked Service: ls_adls_covidreportingdl 
+        File path: raw/population/population_by_age.tsv
+        Import schema: None
+    ->  compression type: none
+        delimiter: tab
+    ->  validate all
+    ->  publish all
+
+7. Create pipeline
+    -> New pipeline: pl_ingest_population_data
+    -> Activities: 
+        General: 
+        drag 'Copy data', Name: Copy Population Data
+        Timeout: 10mins
+
+        Source: ds_population_raw_gz
+
+        Sink: ds_population_raw_tsv
+
+        validate
+        Debug (input, output, details)
+        Publish all
+
+        Verify in Azure Storage Explorer
+
+8. Validation activity
+    Scenario:1
+    -> Drag Validation activity, name: Check if file exists
+    -> Settings: 
+        Dataset: ds_population_raw_gz
+        Timeout: 1:00:00:00 (testing: 0:00:00:30 seconds)
+        Sleep: 600 seconds (Testing: 10 seconds)
+        Minimum size: 1024
+    -> Drag Success button, connect to Copy data
+    -> Delete source file (.gz) from Storage Explorer
+    -> Test1: wait for validation to fail (file doesn't exist)
+    -> Test2: put file in Storage Explorer
+            Timeout: 1:00:00:00 (testing: 0:00:02:00 minutes)
+
+    Scenario:2
+    -> Drag Get Metadata, Name: Get File Metadata
+    -> Dataset: ds_population_raw_gz
+        File list: Column count, Size, Exists
+        (Debug to get details from output for above values)
+
+    -> Drag If condition
+        Connect from Get Metadata Success to If Condition
+        Activities -> Expression -> Add dynamic content
+            -> Logical Functions -> equals
+            -> @equals(activity('Get File Metadata').output.columnCount, 13)
+            -> Move Copy Population Data for True
+            -> Tie Validation activity to Get Metadata activity
+            -> Debug
+            
+            -> Change expected column count to 14 to fail
+                (Succeeds but doesn't perform anything)
+            -> False -> Drag Web activity -> 
+                Name: Send Email
+                Settings: 
+                    URL:https://file_incompatible
+                    Method: POST 
+                    Body: Dummy 
+
+    Scenario: 3   (Lesson 27)
+        (Delete source file on successful copy)
+        -> If Condition -> True -> Drag Delete activity (Delete source file)
+        -> Source: Dataset: ds_population_raw_gz
+        -> Enable logging: uncheck
+        -> Link Copy activity to Delete activity
+        Debug
+
+9. Triggers: (slide 67)
+        Mange -> Triggers -> New -> 
+        -> Name: tr_ingest_population_data
+        -> Storage Event trigger
+        -> select subscription, storage account name, container name
+        -> Blob path begins with: population_by_age.tsv.gz
+        -> Event: Blob created: check
+        -> Start trigger on creation: check
+        -> Create
+        -> Add trigger in pl_ingest_population_data pipeline
+        -> Publish
+
+        <Register Microsoft.EventGrid from subscription -> Resource providers>
+
+---------------------------------------------------------------------
+--Section 4: Data Ingestion from HTTP (slide 74)
+---------------------------------------------------------------------
+ecdc.europa.eu/en/covid-19/data
+
+https://www.ecdc.europa.eu/en/publications-data/data-national-14-day-notification-rate-covid-19
+
+Github: https://github.com/cloudboxacademy/covid19
+
+BaseUrl - https://raw.githubusercontent.com
+RelativeUrl for each of the file will be
+cloudboxacademy/covid19/main/ecdc_data/cases_deaths.csv
+cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+cloudboxacademy/covid19/main/ecdc_data/testing.csv
+cloudboxacademy/covid19/main/ecdc_data/country_response.csv
+
+HTTP ---> Azure Data Lake
+
+1. Create pipeline (Slide 79)
+    Linked Serivces: HTTP 
+    Name: ls_http_opendata_ecdc_europa_eu
+    Base URL: https://raw.githubusercontent.com
+    Authentication type: Anonymous
+    Test connection, create
+
+2. Datasets: 
+    Source: New -> HTTP -> Delimited text
+    Name: ds_cases_deaths_raw_csv_http
+    Linked Services: ls_http_opendata_ecdc_europa_eu
+    Relative URL: cloudboxacademy/covid19/main/ecdc_data/cases_deaths.csv
+    First row header
+
+    Sink: New -> ADLS Gen2 -> Delimited text
+    Name: ds_cases_deaths_raw_csv_dl
+    Linked Services: ls_adls_covidreportingdl
+    File path: raw/ecdc/cases_deaths.csv
+    First row header
+
+3. Create pipeline: 
+    Name: pl_ingest_cases_deaths_data
+    Drag: Copy activity -> Name: Copy Cases and Deaths Data
+    Source: ds_cases_deaths_raw_csv_http
+    Sink: ds_cases_deaths_raw_csv_dl
+
+    Debug
+    Check in Storage Explorer
+    Publish all
+
+Variables and Parameters
+-------------------------
+Parameters are external values passed into pipelines, datasets or linked
+services. The value cannot be changed inside a pipeline.
+Variables are internal values set inside a pipeline. The value can be changed
+inside the pipeline using Set Variable or Append Variable Activity
+
+Source is same but relative urls are different. 
+Sink destination (linked services) is same but file names are different
+
+1. Create parameters for source and sink data sets. 
+    goto source ds: ds_cases_deaths_raw_csv_http
+        Parameters: New
+        Name: relativeURL
+
+        Connections: Relative URL -> Add dynamic content
+            -> Parameters: relativeURL (@dataset().relativeURL)
+            Finish
+
+    goto sink ds: ds_cases_deaths_raw_csv_dl
+        (parameterize the file name)
+        Parameters: New
+        Name: fileName
+
+        Connections: File Path -> File: Add dynamic content
+            -> Parameters: fileName (@dataset().fileName)
+            Finish
+
+2.  Create pipeline with variables
+    goto Pipeline: pl_ingest_cases_deaths_data
+        Variables: New
+        Name: sourceRelativeURL
+        Default value: cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+
+        Name: sinkFileName
+        Default value: hospital_admissions.csv
+
+        Click on Copy activity: 
+            Source: relativeURL: Add dynamic content 
+            Select sourceRelativeURL
+
+            Sink: fileName: Add dynamic content 
+            Select sinkFileName
+
+        Debug
+
+3. parameterize the pipeline itself so that it becomes truly generic, and then we can pass on the parameters from the trigger. 
+   Convert variables into parameters
+
+    goto Pipeline: pl_ingest_cases_deaths_data
+    Parameters -> New
+        sourceRelativeURL
+        sinkFileName
+    No default values. We'll pass them during run time. 
+
+    Delete 2 variables
+
+    goto Copy activity: 
+        Sink -> replace parameter: @pipeline().parameters.sinkFileName
+        Source -> replace parameter: @pipeline().parameters.sourceRelativeURL
+
+    Rename pipeline and data set names to be generic: 
+        ds_cases_deaths_raw_csv_http -> ds_ecdc_raw_csv_http
+        ds_cases_deaths_raw_csv_dl -> ds_ecdc_raw_csv_dl
+        pl_ingest_cases_deaths_data -> pl_ingest_ecdc_data
+        Copy activity: 
+        Copy Cases and Deaths Data -> Copy ECDC Data
+
+    verify Source and Sink of copy activity is pointing to the new data set names. 
+
+    Debug
+
+    Pass parameter values: 
+    sourceRelativeURL: cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+    sinkFileName: hospital_admissions.csv
+
+    Monitor pipeline
+
+    Triggers: pass in parameter values during run time. 
+
+    Manage -> Triggers -> New
+    (Since the data will always be there, we'll be looking at getting the data at a certain point, we'll use scheduled trigger)
+
+    -> Name: tr_ingest_hospital_admissions_data
+    -> Type: schedule
+    -> Recurrence: 24hrs
+    -> Activated: Yes
+    -> Before publishing, attach trigger to pipeline: pl_ingest_ecdc_data
+    -> Ok
+    -> Pass parameters: 
+        sourceRelativeURL: cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+        sinkFileName: hospital_admissions.csv
+    -> Publish
+    (In trigger, ensure start data is 2 mins later)
+
+4. To run 4 files, we need to create 4 triggers. To make it further generic, we'll use one trigger to accept any number of files. 
+
+
+
+
+
+
+
+
