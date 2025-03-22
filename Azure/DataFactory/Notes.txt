@@ -615,7 +615,7 @@ Test file:
 
     Data preview
 
-5. Sink Transformation
+6. Sink Transformation
     (+) on Select transformation -> Sink
     Sink tab: 
         Output stream name: CasesAndDeathsSink
@@ -637,7 +637,7 @@ Test file:
     Inspect -> Data preview 
     Validate -> Publish
 
-6. Create ADF Pipeline
+7. Create ADF Pipeline
     Pipelines -> New -> Dataflow activity -> Use existing: df_transform_cases_deaths -> Ok
     Settings: 
         Compute size: small
