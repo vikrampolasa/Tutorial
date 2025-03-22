@@ -640,8 +640,7 @@ Test file:
 6. Create ADF Pipeline
     Pipelines -> New -> Dataflow activity -> Use existing: df_transform_cases_deaths -> Ok
     Settings: 
-        Compute type: General purpose
-        Core count: 4
+        Compute size: small
     Name: pl_process_cases_and_deaths_data
     Debug
     Check progress
