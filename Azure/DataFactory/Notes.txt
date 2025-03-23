@@ -143,7 +143,7 @@ the source, the pipeline, and the sink.
     Scenario:2
     -> Drag Get Metadata, Name: Get File Metadata
     -> Dataset: ds_population_raw_gz
-        File list: Column count, Size, Exists
+        Field list: Column count, Size, Exists
         (Debug to get details from output for above values)
 
     -> Drag If condition
