@@ -484,7 +484,7 @@ Should have atleast one source transformation and one sink transformation.
 
 Transform cases_deaths.csv
 slide-93 to verify the transformation
-upload country_lookup.csv to covidreportingsa/lookup
+upload country_lookup.csv to covidreportingdl/lookup
 Test file: 
     create a smaller file for our input so that we can easily debug.
         In cases_deaths.csv filter one Europe country and one non-Europe
@@ -555,7 +555,7 @@ Test file:
                     Reset
             >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-            Delete Continet, rate_14_day, date (add rule based mapping)
+            Delete Continent, rate_14_day, date (add rule based mapping)
             Add mapping -> Rule based mapping
                         matching condition: name == 'date'
                         Output column name expression: 'reported' + '_date'
@@ -606,7 +606,7 @@ Test file:
 
     PivotCounts@country -> country
     country_code_2_digit -> country_code_2_digit
-    country_code_3_digit -> country_code_2_digit
+    country_code_3_digit -> country_code_3_digit
     PivotCounts@population -> population
     confirmed_cases_count -> cases_count
     deaths_count -> deaths_count 
@@ -621,7 +621,7 @@ Test file:
         Output stream name: CasesAndDeathsSink
         Incoming stream: SelectForSink
         Sink type: Dataset
-            (goal is to create a csv for sink file. But csv is not supported for line. So we need to go with data set. )
+            (goal is to create a csv for sink file. But csv is not supported for inline. So we need to go with data set. )
             -> Create blob container under covidreportingdl: processed
         Dataset: New -> ADLS Gen2 -> Delimited Text
             Name: ds_processed_cases_and_deaths
@@ -654,7 +654,7 @@ Test file:
         Add trigger -> Trigger now
 
     CasesAndDeathsSink: 
-        Settings: Output to single file (not recommended)
+        Settings: File name option: Output to single file (not recommended)
         Optimize: ADF will change to single partition
         Output to single file: cases_and_deaths.csv
         Publish
