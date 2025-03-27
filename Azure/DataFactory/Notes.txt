@@ -754,4 +754,14 @@ From hospital_admissions.csv
             Weekly: country, country_code_2_digit, country_code_3_digit, 
                     population, reported_date, reported_week_start_date, reported_week_end_date, new_hospital_occupancy_count, new_icu_occupancy_count, source
 
-    12. Create ADF pipeline
+    12. Sink Transformation
+        For Weekly:
+        Create dataset: ds_processed_hospital_adminssion_weekly
+        save in - processed/ecdc/hospital_adminssion_weekly
+            
+        For Daily: 
+        Create dataset: ds_processed_hospital_adminssion_daily
+        save in - processed/ecdc/hospital_adminssion_daily
+    
+    13. Create ADF pipeline
+        Name: pl_process_hospital_admissions
