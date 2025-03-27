@@ -119,3 +119,31 @@ Run pipelines: pl_process_cases_and_deaths_data, pl_process_hospital_admissions
     Upload covid_transform_testing.hql to covidvkpreportingsa/scripts/hql
 
 5. Create ADF pipeline with Hive activity
+    New pipeline: pl_process_testing_data
+        HDInsight - Hive 
+            Name: Process Testing Data
+            HDInsight cluster: New  
+                ls_hdi_covid_cluster
+                Bring your own HDInsight
+                Select subscription
+                HDI Cluster: covid-reporting-hdi
+                Azure Storage Linked Services: ls_ablob_covidreportingsa
+                username: admin
+                Test connection
+
+                (manage tab should show the new linked services)
+            Script (tab): 
+                Script Linked Services: ls_ablob_covidreportingsa
+                File path: scripts/hql/covid_transform_testing.hql
+
+            Publish
+
+    Manual trigger
+            
+    Check in covidreportingdl/processed/testing
+
+    Connect to Ambari: 
+    select * from covid_reporting_processed.testing limit 10;
+
+6. Delete HDInsight cluster
+    Portal -> All resources -> HDInsight -> Select -> Delete
