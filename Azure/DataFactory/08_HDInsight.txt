@@ -1,0 +1,121 @@
+---------------------------------------------------------------------
+--Section 8: HDInsight
+---------------------------------------------------------------------
+Replace text in covidreportingsa/configs/ecdc_file_list.json with below: 
+
+    [
+    {
+        "sourceBaseURL":"https://github.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/raw/main/ecdc_data/cases_deaths.csv",
+        "sinkFileName":"cases_deaths/cases_deaths.csv"
+    },
+    {
+        "sourceBaseURL":"https://github.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/raw/main/ecdc_data/hospital_admissions.csv",
+        "sinkFileName":"hospital_admissions/hospital_admissions.csv"
+    },
+    {
+        "sourceBaseURL":"https://github.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/raw/main/ecdc_data/testing.csv",
+        "sinkFileName":"testing/testing.csv"
+    },
+    {
+        "sourceBaseURL":"https://github.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/raw/main/ecdc_data/country_response.csv",
+        "sinkFileName":"country_response/country_response.csv"
+    }
+]
+
+Run pl_ingest_ecdc_data. 
+New folders should be created in covidreportingdl/raw/ecdc
+(delete files under raw/ecdc. Not the folder.)
+
+In Dataset: ds_raw_cases_and_deaths, update folder to raw/ecdc/cases_deaths/cases_and_deaths.csv
+
+In Dataset: ds_raw_hospital_admissions, update folder to raw_ecdc/hospital_admissions/hospital_admissions.csv
+
+Move files in covidreportingdl/lookup folder to new folders: 
+    dim_date.csv -> dim_date/dim_date.csv
+    dataset ds_dim_date_lookup: lookup/dim_date/dim_date.csv
+
+    country_lookup -> country_lookup/country_lookup.csv
+    dataset ds_country_lookup: lookup/country_lookup/country_lookup.csv
+
+Publish all
+
+Run pipelines: pl_process_cases_and_deaths_data, pl_process_hospital_admissions
+
+1. Create HDInsight cluster. 
+    (HDInsight only allows access to Data Lake Storage Gen2 accounts via a managed identity. We'll create a managed identity for our application. We'll then provide access to the Data Lake for their managed identity. We'll then assign that to our HDInsight cluster. With that, the HDInsight cluster will now have access to the Data Lake.)
+
+    In Portal: + resource -> user assigned managed identity 
+        -> resource group: covid-reporting-rg
+        -> Name: covid-hdi-identity
+        -> Review + create
+
+    Grant access for the Data Lake to the managed identity.
+    Home -> dashboard -> Covid Reporting Project 
+        -> covidreportingdl
+        -> Access control (IAM)
+        -> + Add Role assignment
+        -> Role: Storage Blob Data Owner
+        -> Select: covid-hdi-identity
+        -> Save
+            (with the assignment, our identity will have the Blob Data Owner Access to the Data Lake. So now we need to go ahead and create the HDInsight cluster.)
+
+        -> In Portal: + resource -> azure HDInsight -> create 
+            -> subscription: (registed if prompted - search for HDInsight)
+            -> Resource group: covid-reporting-rg
+            -> cluster name: covid-reporting-hdi (must be unique)
+            -> Region: ( region of the HDInsight cluster has to be the same as the region for the Data Lake Storage Gen2.)
+            -> Cluster type: Hadoop
+            -> Cluster login password
+
+            -> Next: Storage
+            ->  Primary Storage type: ADLS Gen2
+                Primary storage account: covidreportingdl
+                    Filesystem: hid-logs
+                User-assigned managed identity: covid-hdi-identity
+
+            -> Add Azure storage: covidreportingsa
+
+            (Ambari is the tool which you can use to manage your HDInsight cluster, and monitor as well)
+
+            Configuration + pricing: 
+            (pick smaller options)
+            Head node and worker node: A5 (2 cores)
+            Number of nodes: 2
+
+            (WARNING!! HDInsight Cluster billing starts once a cluster is created, and stops when the cluster is deleted. Billing is pro-rated per minute, so you should always delete your cluster when it's no longer in use.)
+
+            -> Review + create
+
+2. HDInsight tour: 
+    Go to resource: covid-reporting-hdi
+    URL-public facing to access HDInsight
+    Cluster size: if need to scale up
+            (Enable autoscale)
+    SSH + Cluster login: reset or incase you forget admin user password
+        SSH hostname info
+    Storage accounts: verify 
+
+    Overview - Ambari: login with admin
+            - View full monitoring of cluster
+            - Hosts: Head nodes, worker nodes, zookeeper nodes
+
+            - Hive view (top right): 
+            (query, jobs, tables, saved queries, UDFs)
+
+            show databases; 
+
+3. Testing data: 
+    Open covidreportingdl/raw/ecdc/testing/testing.csv
+
+4. Hive script walkthrough: 
+    (External tables are not managed by Hive, but it is just a structure which is placed on top of their files themselves. So when you drop a external table, the data doesn't get dropped. The files are not produced by the hive scripts, they are produced by an external application.
+    
+    Managed table: If table is dropped, data gets dropped)
+
+    Upload covid_transform_testing.hql to covidvkpreportingsa/scripts/hql
+
+5. Create ADF pipeline with Hive activity

@@ -1,0 +1,50 @@
+--Create Data Factory   
+    --Create resource group: covid-reporting-rg 
+    --covid-reporting-adf
+    --pin create new: Covid Reporting project 
+        --verify Dashboard
+
+--Create Storage Account
+    --covidreportingsa
+    --performance - standard
+    --Redundancy - locally 
+    --Review and Create
+    --go to resource 
+    --pin service
+
+    --Access Keys
+
+--Storage Explorer
+    -- covidvkpreportingsa  -> Storage Browser -> Download Azure Storage Explorer 
+
+--Azure Data Lake Gen2 account 
+    Azure Date Lake Storage Gen2 is built on top of the standard storage account, but it provides additional features such as hierarchical namespace, fine grain security, and compatibility with big data workloads.
+    So it's more suited to be used as a Data Lake for big data analytics.
+    --Storage account
+    --Name: covidreportingdl
+    --Advanced: Enable hierarchical namespace
+    --Review + create
+    --In the account: Properties
+    --pin service
+
+--sql database
+    db name: covid-db
+    server: create new     
+            Server: covid-srv 
+            Authentication method: User SQL Authentication
+                        Server admin: admin 
+
+            Workload: development
+            Compute+storage: configure database 
+                        Service tier: basic
+            Backup storage Redundancy: local
+
+    Networking: 
+        Connectivity method: Public endpoint
+        Allow Azure services to access: Yes
+        Add current ip address: Yes (desktop can interact with the db)
+
+    Review, create
+
+    Go to service account: 
+        Server name, Pricing tier, storage(2gb)

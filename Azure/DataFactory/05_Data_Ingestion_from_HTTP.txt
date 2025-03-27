@@ -1,0 +1,288 @@
+---------------------------------------------------------------------
+--Section 5: Data Ingestion from HTTP (slide 74)
+---------------------------------------------------------------------
+ecdc.europa.eu/en/covid-19/data
+
+https://www.ecdc.europa.eu/en/publications-data/data-national-14-day-notification-rate-covid-19
+
+Github: https://github.com/cloudboxacademy/covid19
+
+BaseUrl - https://raw.githubusercontent.com
+RelativeUrl for each of the file will be
+cloudboxacademy/covid19/main/ecdc_data/cases_deaths.csv
+cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+cloudboxacademy/covid19/main/ecdc_data/testing.csv
+cloudboxacademy/covid19/main/ecdc_data/country_response.csv
+
+HTTP ---> Azure Data Lake
+
+1. Create pipeline (Slide 79)
+    Linked Serivces: HTTP 
+    Name: ls_http_opendata_ecdc_europa_eu
+    Base URL: https://raw.githubusercontent.com
+    Authentication type: Anonymous
+    Test connection, create
+
+2. Datasets: 
+    Source: New -> HTTP -> Delimited text
+    Name: ds_cases_deaths_raw_csv_http
+    Linked Services: ls_http_opendata_ecdc_europa_eu
+    Relative URL: cloudboxacademy/covid19/main/ecdc_data/cases_deaths.csv
+    First row header
+
+    Sink: New -> ADLS Gen2 -> Delimited text
+    Name: ds_cases_deaths_raw_csv_dl
+    Linked Services: ls_adls_covidreportingdl
+    File path: raw/ecdc/cases_deaths.csv
+    First row header
+
+3. Create pipeline: 
+    Name: pl_ingest_cases_deaths_data
+    Drag: Copy activity -> Name: Copy Cases and Deaths Data
+    Source: ds_cases_deaths_raw_csv_http
+    Sink: ds_cases_deaths_raw_csv_dl
+
+    Debug
+    Check in Storage Explorer
+    Publish all
+
+Variables and Parameters
+-------------------------
+Parameters are external values passed into pipelines, datasets or linked services. The value cannot be changed inside a pipeline.
+Variables are internal values set inside a pipeline. The value can be changed inside the pipeline using Set Variable or Append Variable Activity
+
+Source is same but relative urls are different. 
+Sink destination (linked services) is same but file names are different
+
+1. Create parameters for source and sink data sets. 
+    goto source ds: ds_cases_deaths_raw_csv_http
+        Parameters: New
+        Name: relativeURL
+
+        Connection: Relative URL -> Add dynamic content
+            -> Parameters: relativeURL (@dataset().relativeURL)
+            Finish
+
+    goto sink ds: ds_cases_deaths_raw_csv_dl
+        (parameterize the file name)
+        Parameters: New
+        Name: fileName
+
+        Connection: File Path -> File: Add dynamic content
+            -> Parameters: fileName (@dataset().fileName)
+            Finish
+
+2.  Create pipeline with variables
+    goto Pipeline: pl_ingest_cases_deaths_data
+        Variables: New
+        Name: sourceRelativeURL
+        Default value: cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+
+        Name: sinkFileName
+        Default value: hospital_admissions.csv
+
+        Click on Copy activity: 
+            Source: relativeURL: Add dynamic content 
+            Select variable: sourceRelativeURL
+
+            Sink: fileName: Add dynamic content 
+            Select variable: sinkFileName
+
+        Debug
+
+3. parameterize the pipeline itself so that it becomes truly generic, and then we can pass on the parameters from the trigger. 
+   Convert variables into parameters
+
+    goto Pipeline: pl_ingest_cases_deaths_data
+    Parameters -> New
+        sourceRelativeURL
+        sinkFileName
+    No default values. We'll pass them during run time. 
+
+    Delete 2 variables
+
+    goto Copy activity: 
+        Sink -> replace parameter: @pipeline().parameters.sinkFileName
+        Source -> replace parameter: @pipeline().parameters.sourceRelativeURL
+
+    Rename pipeline and data set names to be generic: 
+        ds_cases_deaths_raw_csv_http -> ds_ecdc_raw_csv_http
+        ds_cases_deaths_raw_csv_dl -> ds_ecdc_raw_csv_dl
+        pl_ingest_cases_deaths_data -> pl_ingest_ecdc_data
+        Copy activity: 
+        Copy Cases and Deaths Data -> Copy ECDC Data
+
+    verify Source and Sink of copy activity is pointing to the new data set names. 
+
+    Debug
+
+    Pass parameter values: 
+    sourceRelativeURL: cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+    sinkFileName: hospital_admissions.csv
+
+    Monitor pipeline
+
+    Triggers: pass in parameter values during run time. 
+
+    Manage -> Triggers -> New
+    (Since the data will always be there, we'll be looking at getting the data at a certain point, we'll use scheduled trigger)
+
+    -> Name: tr_ingest_hospital_admissions_data
+    -> Type: schedule
+    -> Recurrence: 24hrs
+    -> Activated: Yes
+    -> Before publishing, attach trigger to pipeline: pl_ingest_ecdc_data
+    -> Ok
+    -> Pass parameters: 
+        sourceRelativeURL: cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv
+        sinkFileName: hospital_admissions.csv
+    -> Publish
+    (In trigger, ensure start data is 2 mins later)
+
+4. To run 4 files, we need to create 4 triggers. To make it further generic, we'll use one trigger to accept any number of files. 
+Data Factory provides activities called Lookup and ForEach to get the information from a data source which is supported by Azure.
+
+    -> Create JSON file: ecdc_file_list_for_2_files.json
+    upload to new folder: covidreportingsa/config
+    [
+        {
+            "sourceRelativeURL":"cloudboxacademy/covid19/main/ecdc_data/cases_deaths.csv",
+            "sinkFileName":"cases_deaths.csv"
+        },
+        {
+            "sourceRelativeURL":"cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv",
+            "sinkFileName":"hospital_admissions.csv"
+        }
+    ]
+    -> in ADF, create new data set: Azure Blob Storage -> JSON 
+        -> Name: ds_ecdc_file_list
+        -> Linked Serivces: ls_ablob_covidreportingsa
+        -> File Path: config/ecdc_file_list_for_2_files.json
+        -> Import schema
+        -> OK
+    >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    To understand how Lookup activity works: 
+        Create test pipeline
+        Drag Lookup activity
+        Settings: Source dataset -> ds_ecdc_file_list
+        First row only: uncheck
+        Debug -> Check output
+
+        Drag ForEach activity
+        Tie Lookup to ForEach
+        Settings: 
+            Sequential
+            Items: Add dynamic content
+            @activity('Lookup1').output.value
+            Finish
+
+        Test pipeline: 
+            variables: New
+            sourceRelativeURL
+
+            select ForEach -> Activities -> edit ForEach
+            -> Drag Set Variable activity
+            -> Variables: 
+                Name: sourceRelativeURL
+                Value: Add dynamic content
+                    @item().sourceRelativeURL
+
+            Debug -> check output 
+            (Lookup1, ForEach1, Set Variable1, Set Variable1)
+
+            Discard changes for test pipeline
+    >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    Publish
+
+5. Linked Service Parameters: 
+    Pass sourceURL as parameter (incase if different for other files)
+
+    Linked Services -> ls_http_opendata_ecdc_europa_eu -> Parameters -> New -> Name: sourceBaseURL
+    -> Base URL: clear text field -> Add dynamic content 
+        -> sourceBaseURL (@linkedService().sourceBaseURL)
+        -> Apply
+
+    -> Author tab 
+        -> find dataset which uses above linked service 
+            ds_ecdc_raw_csv_http
+        -> Parameters: New -> baseURL
+        -> Connections: sourceBaseURL -> Add dynamic content
+            -> @dataset().baseURL
+
+    -> Pipeline: pl_ingest_ecdc_data
+        Parameters: Add new: sourceBaseURL
+
+    -> Copy activity: Source
+        -> baseURL: Add dynamic content
+            -> @pipeline().parameters.sourceBaseURL
+        -> Finish
+    Debug
+
+    sourceRelativeURL:cloudboxacademy/covid19/main/ecdc_data/country_response.csv
+    sinkFileName: country_response.csv
+    sourceBaseURL: https://raw.githubusercontent.com
+
+    Publsh All
+
+6. Metadata driver pipeline
+    Bring everything we learn together to process all 4 files. 
+
+    create file in covidreportingsa/configs: ecdc_file_list.json
+    [
+    {
+        "sourceBaseURL":"https://raw.githubusercontent.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/main/ecdc_data/cases_deaths.csv",
+        "sinkFileName":"cases_deaths.csv"
+    },
+    {
+        "sourceBaseURL":"https://raw.githubusercontent.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/main/ecdc_data/hospital_admissions.csv",
+        "sinkFileName":"hospital_admissions.csv"
+    },
+    {
+        "sourceBaseURL":"https://raw.githubusercontent.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/main/ecdc_data/testing.csv",
+        "sinkFileName":"testing.csv"
+    },
+    {
+        "sourceBaseURL":"https://raw.githubusercontent.com",
+        "sourceRelativeURL":"cloudboxacademy/covid19/main/ecdc_data/country_response.csv",
+        "sinkFileName":"country_response.csv"
+    }
+    ]
+
+    -> In pipeline: pl_ingest_ecdc_data
+    -> Drag lookup activity -> Name: Lookup ECDC File list
+    -> Settings -> Dataset: ds_ecdc_file_list
+            First row only: uncheck
+    
+    -> Drag ForEach activity, Name: Execute Copy For Every Record
+    -> Settings: Items: @activity('Lookup ECDC File list').output.value 
+            Sequential: uncheck
+    -> Move Copy activity inside ForEach
+        
+    -> Pipeline -> Delete parameters (they'll come from Lookup)
+
+    -> ForEach activity -> Copy ECDC Data 
+        -> Source
+            -> relativeURL: @item().sourceRelativeURL
+            -> baseURL: @item().sourceBaseURL
+
+        -> Sink 
+            -> fileName: @item().sinkFileName
+
+    Correct the source file in ds_ecdc_file_list:
+        Connection -> File path -> ecdc_file_list.json 
+    Validate -> Debug
+    Storage Explorer should have 4 files 
+
+    Create trigger: 
+    Delete: tr_ingest_hospital_admissions_data
+
+    New: tr_ingest_ecdc_data
+    Type: schedule
+    Start date: 3mins ahead
+    Activate
+    Attach trigger to pipeline: pl_ingest_ecdc_data
+    Publish

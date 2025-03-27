@@ -1,0 +1,136 @@
+---------------------------------------------------------------------
+--Section 4: Data Ingestion from Azure blob
+---------------------------------------------------------------------
+Copy activity from Azure blob storage to Azure Data Lake
+
+population_by_age.tsv: country_codes, year age range
+    filter by UK
+    : empty data, p: provisional, e: estimated 
+
+upload this file into blob storage
+gz to raw (copy activity)
+
+in order to extract the data. We need connection detail to the blob storage and to the Data Lake.
+So in Data factory, these connection details are represented by link services.
+And finally, the copy activity itself is not executable. So we need a pipeline to wrap all of this up so that it can be executed.
+
+There are three broad areas here:
+the source, the pipeline, and the sink.
+
+1. In covidreportingsa: create blob container - population
+    upload: population_by_age.tsv.gz
+
+2. create "raw" container in datalake: covidreportingdl
+
+3. Naming conventions: ls: linked services, ds: dataset, pl: pipeline
+        ablob: azure blob storage, adls: azure datalake storage
+
+4. Complete steps in the order mentioned in the slide (61). 
+
+5. Create Linked Services: 
+    Open ADF service -> manage -> Linked services -> New
+    -> Azure Blob Storage ->  Name: ls_ablob_covidreportingsa
+    -> Azure subscription -> 
+        Storage account: covidreportingsa 
+    -> Test and create
+
+    -> New -> ADLS Gen2 -> ls_adls_covidreportingdl 
+    -> Azure subscription -> Storage account: covidreportingdl -> Test and create
+
+6. Create Datasets: 
+    -> Author -> Datasets (new) -> Azure Blob Storage -> Delimited Text 
+    ->  Name: ds_population_raw_gz 
+        Linked Service: ls_ablob_covidreportingsa
+        File path: population/population_by_age.tsv.gz 
+        Import schema: None (we're not examining the data, just copying)
+    ->  compression type: gzip
+        compression level: optimal
+        delimiter: tab
+        preview data
+
+    Datasets (new) -> ADLS Gen2 -> Delimited Text 
+    ->  Name: ds_population_raw_tsv
+        Linked Service: ls_adls_covidreportingdl 
+        File path: raw/population/population_by_age.tsv
+        Import schema: None
+    ->  compression type: none
+        delimiter: tab
+    ->  validate all
+    ->  publish all
+
+7. Create pipeline
+    -> New pipeline: pl_ingest_population_data
+    -> Activities: 
+        General: 
+        drag 'Copy data', Name: Copy Population Data
+        Timeout: 10mins
+
+        Source: ds_population_raw_gz
+
+        Sink: ds_population_raw_tsv
+
+        validate
+        Debug (input, output, details)
+        Publish all
+
+        Verify in Azure Storage Explorer
+
+8. Validation activity
+    Scenario:1
+    -> Drag Validation activity, name: Check if file exists
+    -> Settings: 
+        Dataset: ds_population_raw_gz
+        Timeout: 1:00:00:00 (testing: 0:00:00:30 seconds)
+        Sleep: 600 seconds (Testing: 10 seconds)
+        Minimum size: 1024
+    -> Drag Success button, connect to Copy data
+    -> Delete source file (.gz) from Storage Explorer
+    -> Test1: wait for validation to fail (file doesn't exist)
+    -> Test2: put file in Storage Explorer
+            Timeout: 1:00:00:00 (testing: 0:00:02:00 minutes)
+
+    Scenario:2
+    -> Drag Get Metadata, Name: Get File Metadata
+    -> Dataset: ds_population_raw_gz
+        Field list: Column count, Size, Exists
+        (Debug to get details from output for above values)
+
+    -> Drag If condition
+        Connect from Get Metadata Success to If Condition
+        Activities -> Expression -> Add dynamic content
+            -> Logical Functions -> equals
+            -> @equals(activity('Get File Metadata').output.columnCount, 13)
+            -> Move Copy Population Data for True
+            -> Tie Validation activity to Get Metadata activity
+            -> Debug
+            
+            -> Change expected column count to 14 to fail
+                (Succeeds but doesn't perform anything)
+            -> False -> Drag Web activity -> 
+                Name: Send Email
+                Settings: 
+                    URL:https://file_incompatible
+                    Method: POST 
+                    Body: Dummy 
+
+    Scenario: 3   (Lesson 27)
+        (Delete source file on successful copy)
+        -> If Condition -> True -> Drag Delete activity (Delete source file)
+        -> Source: Dataset: ds_population_raw_gz
+        -> Enable logging: uncheck
+        -> Link Copy activity to Delete activity
+        Debug
+
+9. Triggers: (slide 67)
+        Mange -> Triggers -> New -> 
+        -> Name: tr_ingest_population_data
+        -> Storage Event trigger
+        -> select subscription, storage account name, container name
+        -> Blob path begins with: population_by_age.tsv.gz
+        -> Event: Blob created: check
+        -> Start trigger on creation: check
+        -> Create
+        -> Add trigger in pl_ingest_population_data pipeline
+        -> Publish
+
+        <Register Microsoft.EventGrid from subscription -> Resource providers>

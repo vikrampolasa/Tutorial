@@ -1,0 +1,185 @@
+---------------------------------------------------------------------
+--Section 6: Data Flows  
+---------------------------------------------------------------------
+
+The data flows themselves are not executable, so you'll have to build a pipeline to execute a data flow.
+Should have atleast one source transformation and one sink transformation. 
+
+Transform cases_deaths.csv
+slide-93 to verify the transformation
+upload country_lookup.csv to covidreportingdl/lookup
+Test file: 
+    create a smaller file for our input so that we can easily debug.
+        In cases_deaths.csv filter one Europe country and one non-Europe
+        Filter by GBR, IND and save to new file: cases_deaths_uk_ind_only.csv
+        Upload to SA: covidreportingdl/raw/ecdc
+        This is a test file and will delete once we verify our tests. 
+
+1. Source Transformation
+    -> Turn on the debug: select default integration runtime
+        This will create a cluster with 4 CPUs. If needed a bigger one, manage->integration runtimes
+    -> Data Flow -> New -> Name: df_transform_cases_deaths
+    -> Add source: 
+        Source settings: 
+            (Data is flowing through the data flow are called stream.)
+            Output stream name: CasesAndDeathsSource
+            Source type: Dataset
+            Dataset: New - ADLS Gen2 - Delimitted text 
+                Name: ds_raw_cases_and_deaths
+                Linked Services: ls_adls_covidreportingdl
+                File path: raw/ecdc/cases_deaths.csv
+                First row header
+                Import schema: From connection/store
+                Ok
+            -> Options: Allow schema drift 
+                    (For Validate schema, check dataset schema. The incoming file should match exactly as this schema.)
+            -> Sampling: Disabled (We'll use our test file to explicitly test the data we know, rather than ADF picking some sample data)
+            -> Debug settings 
+                Source dataset: Row limit: 2000
+                Sample file: raw/ecdc/cases_deaths_uk_ind_only.csv
+
+        Source options: (similar to copy activity)
+        Projection: Detect data type
+        Optimize: (covered later for performance optimzation)
+        Data preview: (refresh)
+
+2. Filter Transformation
+    (+) on Source transformation -> Filter
+        -> Output stream name: FilterEuropeOnly
+        -> Incoming stream: CasesAndDeathsSource
+        -> Filter on: continent == 'Europe' && not (isNull(country_code))
+            (include continent: Europe, with country_code - exclue blanks)
+            Data preview
+            Save and finish
+        -> Data preview
+        -> Inspect tab
+
+3. Select Transformation
+    (+) on Filter transformation -> Select
+    -> Output stream name: SelectOnlyRequiredFields
+    -> Incoming stream: FilterEuropeOnly
+    -> Add mapping: 
+            >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+            Fixed mapping: add column and inspect 
+                    Skip duplicate input columns
+            Rule based mapping: 
+                Delete all columns 
+                Enter matching conditions: open expression builder                    
+                    Column names prefixed with 'cases_': 
+                        matching condition: true()
+                        Output column name expression: 'cases_' + $$
+                        Save and Finish
+                        Inspect 
+                    String columns append with '_string'
+                        matching condition: type == 'string'
+                        Output column name expression: $$ + '_string'
+                        Save and Finish
+                        Inspect 
+                    Reset
+            >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+            Delete Continent, rate_14_day, date (add rule based mapping)
+            Add mapping -> Rule based mapping
+                        matching condition: name == 'date'
+                        Output column name expression: 'reported' + '_date'
+                        Save and Finish
+                        Inspect
+
+4. Pivot Transformation
+    Indicator field has Confirmed cases and death. We'll pivot data to get count for each indicator.
+    Pivot key: indicator, column being pivoted: daily_count. Other columns used in group by
+
+    (+) on Select transformation -> Pivot
+    Name: PivotCounts
+    Group by: All columns except pivot key and column being pivoted. 
+    Pivot key: indicator 
+        Value:  confirmed cases  
+                deaths
+    Pivoted columns: 
+        column name pattern: middle: _
+        Pivot expression: 
+            column name: count
+            Expression: sum(daily_count)
+
+5. Lookup Transformation
+    Get data for country_code_2_digit (from lookup)
+        Create dataset for lookup file: 
+        Datasets -> New -> ADLS Gen2 -> Delimited Text
+            Name: ds_country_lookup
+            Linked Services: ls_adls_covidreportingdl
+            File path: lookup/country_lookup.csv
+            File header + Import schema 
+            OK -> Preview data
+
+        Source -> Output Stream name: CountryLookup
+            Dataset: ds_country_lookup
+            Projection: population - integer
+            Data preview
+
+    (+) on Pivot transformation -> Lookup
+    Output stream name: LookupCountry
+    Primary stream: PivotCounts
+    Lookup stream: CountryLookup (will perform left-outer join)
+    Match on: Any row 
+    Lookup conditions: country == country
+    Inpsect -> Data preview
+
+    (+) on Lookup transformation -> Select
+    Output stream name: SelectForSink
+
+    PivotCounts@country -> country
+    country_code_2_digit -> country_code_2_digit
+    country_code_3_digit -> country_code_3_digit
+    PivotCounts@population -> population
+    confirmed_cases_count -> cases_count
+    deaths_count -> deaths_count 
+    reported_date -> reported_date
+    source -> source
+
+    Data preview
+
+6. Sink Transformation
+    (+) on Select transformation -> Sink
+    Sink tab: 
+        Output stream name: CasesAndDeathsSink
+        Incoming stream: SelectForSink
+        Sink type: Dataset
+            (goal is to create a csv for sink file. But csv is not supported for inline. So we need to go with data set. )
+            -> Create blob container under covidreportingdl: processed
+        Dataset: New -> ADLS Gen2 -> Delimited Text
+            Name: ds_processed_cases_and_deaths
+            Linked Serivces: ls_adls_covidreportingdl
+            File path: processed/ecdc/cases_deaths
+            First row header: Yes
+            Import schema: None
+            Ok
+
+    Settings tab: 
+        Clear the folder: Yes
+
+    Inspect -> Data preview 
+    Validate -> Publish
+
+7. Create ADF Pipeline
+    Pipelines -> New -> Dataflow activity -> Use existing: df_transform_cases_deaths -> Ok
+    Settings: 
+        Compute size: small
+    Name: pl_process_cases_and_deaths_data
+    Debug
+    Check progress
+    Turn off Data flow debug (after completion)
+
+    Open one of the files in generated in processed folder
+
+    (Notes: to debug, you need to enable 'Data flow debug' or ADF will enable. Alternate is to create a trigger. ADF will create a cluster, execute the transformation and will destroy after pipleline is completed)
+
+        Publish
+        Add trigger -> Trigger now
+
+    CasesAndDeathsSink: 
+        Settings: File name option: Output to single file (not recommended)
+        Optimize: ADF will change to single partition
+        Output to single file: cases_and_deaths.csv
+        Publish
+        Add trigger -> Trigger now 
+        One file will be generated in processed folder: verify data
